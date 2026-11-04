@@ -1,0 +1,72 @@
+[package]
+name = "truongphatcomputer"
+version.workspace = true
+description = "TruongPhatComputer cross-platform disk space manager"
+authors = ["harry0703"]
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "truongphatcomputer_lib"
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[features]
+default = []
+portable = []
+
+[build-dependencies]
+cc = "1.6.0"
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+base64 = "0.23.1"
+blake3 = "1.8.7"
+log = "0.4.34"
+truongphatcomputer-core = { path = "crates/truongphatcomputer-core" }
+truongphatcomputer-platform = { path = "crates/truongphatcomputer-platform", features = ["linux-desktop-icons"] }
+reqwest = { version = "0.13.5", features = ["json", "multipart"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+tauri = { version = "2.12.1", features = ["tray-icon"] }
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-dialog = "2.8.1"
+tauri-plugin-fs = "2.6.0"
+tauri-plugin-log = "2.10.0"
+tauri-plugin-opener = "2.7.0"
+tauri-plugin-os = "2.4.0"
+tauri-plugin-process = "2.4.0"
+tauri-plugin-prevent-default = { version = "6.0.1", features = ["platform-windows"] }
+tauri-plugin-single-instance = "2.5.2"
+tauri-plugin-store = "2.5.0"
+tauri-plugin-updater = "2.13.2"
+tauri-plugin-window-state = "2.5.0"
+uuid = { version = "1.27.0", features = ["v4"] }
+tokio = { version = "1.53.2", features = ["sync"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSDictionary", "NSString", "NSGeometry"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSFont", "NSFontDescriptor", "NSStatusItem", "NSStatusBarButton", "NSWindow", "NSButton", "NSControl", "NSView", "NSEvent", "NSRunningApplication", "NSImage", "NSColor", "NSAttributedString", "NSStringDrawing", "NSGraphics", "NSAppearance", "NSAccessibilityProtocols", "block2"] }
+icns = "0.5.0"
+plist = "1.10.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.39.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Com", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "windows")'.dependencies.windows]
+version = "0.62.2"
+features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Accessibility", "Win32_Graphics_Gdi", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_Graphics_Dxgi_Common"]
+
+[target.'cfg(windows)'.dependencies]
+truongphatcomputer-privileged = { path = "crates/truongphatcomputer-privileged" }
+truongphatcomputer-privileged-protocol = { path = "crates/truongphatcomputer-privileged-protocol" }

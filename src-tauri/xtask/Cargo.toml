@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+version.workspace = true
+description = "TruongPhatComputer repository maintenance tasks"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+blake3 = "1.8.7"
+truongphatcomputer-core = { path = "../crates/truongphatcomputer-core" }
+truongphatcomputer-platform = { path = "../crates/truongphatcomputer-platform" }
+serde_json = "1.0.151"

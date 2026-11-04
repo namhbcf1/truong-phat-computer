@@ -1,0 +1,59 @@
+[
+  {
+    "metadata": {
+      "installId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4001",
+      "appVersion": "1.0.9",
+      "locale": "zh-CN",
+      "distribution": "installed",
+      "osVersion": "11",
+      "timezone": "Asia/Shanghai"
+    },
+    "keyId": "20260907",
+    "requestId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4002",
+    "timestamp": "1788739200",
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+    "origin": "https://truongphatcomputer.app",
+    "method": "GET",
+    "path": "/api/v1/ai/quotas/current",
+    "body": "",
+    "signature": "fF5jlqMGIfP4bC4ePezuyW9j8oMI1u8YLaXUiK4YFk0"
+  },
+  {
+    "metadata": {
+      "installId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4001",
+      "appVersion": "1.0.9",
+      "locale": "zh-CN",
+      "distribution": "installed",
+      "osVersion": "11",
+      "timezone": "Asia/Shanghai"
+    },
+    "keyId": "20260907",
+    "requestId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4002",
+    "timestamp": "1788739200",
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+    "origin": "https://truongphatcomputer.app",
+    "method": "POST",
+    "path": "/api/v1/ai/explanations",
+    "body": "{\"context\":{\"title\":\"中文 😀\",\"path\":\"C:\\\\Program Files\\\\Fixture\",\"description\":\"a\\r\\nb\"}}",
+    "signature": "ToLA_6nuFH6gSDjTov5NBOIsVDgnK04WQzmaGur4DLA"
+  },
+  {
+    "metadata": {
+      "installId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4001",
+      "appVersion": "1.0.9",
+      "locale": "fr-FR",
+      "distribution": "installed",
+      "osVersion": "11",
+      "timezone": "Asia/Shanghai"
+    },
+    "keyId": "20260907",
+    "requestId": "019c0b3d-a9ef-7d11-89a3-d5ea10df4002",
+    "timestamp": "1788739200",
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+    "origin": "https://truongphatcomputer.app",
+    "method": "GET",
+    "path": "/api/v1/ai/quotas/current",
+    "body": "",
+    "signature": "kg-tBkIBQZTYdbMKwDkeihUsez0I5U_swVoELjKpniE"
+  }
+]

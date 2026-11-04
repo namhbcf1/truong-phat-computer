@@ -1,0 +1,32 @@
+[workspace]
+members = [
+  "src-tauri",
+  "src-tauri/crates/truongphatcomputer-core",
+  "src-tauri/crates/truongphatcomputer-cli",
+  "src-tauri/crates/truongphatcomputer-platform",
+  "src-tauri/crates/truongphatcomputer-privileged-protocol",
+  "src-tauri/crates/truongphatcomputer-privileged",
+  "src-tauri/xtask",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.2.0"
+edition = "2021"
+rust-version = "1.99.0"
+authors = ["harry0703 <harry0703@hotmail.com>"]
+license = "GPL-3.0-only"
+repository = "https://github.com/harry0703/TruongPhatComputer"
+homepage = "https://truongphatcomputer.app"
+
+# Filesystem traversal and content hashing are exercised directly from the desktop development
+# build. Optimizing only these performance-critical packages keeps UI iteration responsive while
+# preserving debug assertions and avoiding release-level compilation for unrelated dependencies.
+[profile.dev.package.truongphatcomputer-core]
+opt-level = 2
+
+[profile.dev.package.truongphatcomputer-platform]
+opt-level = 2
+
+[profile.dev.package.blake3]
+opt-level = 3

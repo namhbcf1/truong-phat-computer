@@ -1,0 +1,465 @@
+//! Retina-aware native image rendering. Keep AppKit work on Tauri's main thread.
+use super::{
+    display_entry::DisplayEntry,
+    macos_presentation::{self, Column},
+};
+use block2::RcBlock;
+use objc2::{
+    rc::Retained,
+    runtime::{AnyObject, Bool},
+    AnyThread, MainThreadMarker,
+};
+use objc2_app_kit::{
+    NSAccessibility, NSAppearanceCustomization, NSCellImagePosition, NSColor,
+    NSCompositingOperation, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSImage,
+    NSRectFillUsingOperation, NSStringDrawing,
+};
+use objc2_foundation::{NSData, NSDictionary, NSPoint, NSRect, NSSize, NSString};
+
+#[derive(Default)]
+pub struct Cache {
+    columns: Vec<Column>,
+    icon: Option<bool>,
+    compact: bool,
+    appearance: String,
+    button: usize,
+}
+
+fn text(
+    value: &str,
+    mut rect: NSRect,
+    size: f64,
+    weight: f64,
+    color: &NSColor,
+    right: bool,
+) -> f64 {
+    let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, weight);
+    // These AppKit attribute keys require an NSFont and NSColor respectively.
+    let attributes: Retained<NSDictionary<NSString, AnyObject>> = unsafe {
+        NSDictionary::from_slices(
+            &[NSFontAttributeName, NSForegroundColorAttributeName],
+            &[&*font, color],
+        )
+    };
+    unsafe {
+        let value = NSString::from_str(value);
+        let width = value.sizeWithAttributes(Some(&attributes)).width;
+        if right {
+            // Measure with the same font used for drawing. Digits grow leftward
+            // within their reserved field; the unit always keeps its own origin.
+            let offset = (rect.size.width - width).max(0.0);
+            rect.origin.x += offset;
+            rect.size.width -= offset;
+        }
+        value.drawInRect_withAttributes(rect, Some(&attributes));
+        width
+    }
+}
+
+fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
+    NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+
+fn image(columns: Vec<Column>, icon: bool, dark: bool, compact: bool) -> Retained<NSImage> {
+    let size = NSSize::new(
+        macos_presentation::width(&columns, icon, compact) as f64,
+        macos_presentation::HEIGHT as f64,
+    );
+    let logo = icon
+        .then(|| {
+            NSImage::initWithData(
+                NSImage::alloc(),
+                &NSData::with_bytes(include_bytes!("../../../icons/tray-template.png")),
+            )
+        })
+        .flatten();
+    // A drawing-handler image renders at the actual backing scale instead of
+    // stretching one bitmap. The button retains the image and its owned snapshot.
+    let draw = RcBlock::new(move |_: NSRect| {
+        let foreground = if dark {
+            NSColor::whiteColor()
+        } else {
+            NSColor::blackColor()
+        };
+        let mut x = 0.0;
+        if let Some(logo) = &logo {
+            let area = rect(0.0, 2.0, 18.0, 18.0);
+            logo.drawInRect(area);
+            foreground.set();
+            NSRectFillUsingOperation(area, NSCompositingOperation::SourceAtop);
+            x = 18.0 + macos_presentation::gap(compact) as f64;
+        }
+        for column in &columns {
+            if column.id == super::display_entry::DisplayId::Upload {
+                let rate = macos_presentation::rate_layout(compact);
+                // Direction remains explicit for users who cannot distinguish the colors.
+                text(
+                    "↑",
+                    rect(x, 0.0, 10.0, 11.0),
+                    10.0,
+                    0.3,
+                    &NSColor::systemRedColor(),
+                    false,
+                );
+                text(
+                    "↓",
+                    rect(x, 11.0, 10.0, 11.0),
+                    10.0,
+                    0.3,
+                    &NSColor::systemBlueColor(),
+                    false,
+                );
+                for (value, unit, y) in [
+                    (&column.top, &column.top_unit, 0.0),
+                    (&column.bottom, &column.bottom_unit, 11.0),
+                ] {
+                    text(
+                        value,
+                        rect(
+                            x + f64::from(rate.value_offset),
+                            y,
+                            f64::from(rate.value_width),
+                            11.0,
+                        ),
+                        10.0,
+                        0.0,
+                        &foreground,
+                        true,
+                    );
+                    text(
+                        unit,
+                        rect(
+                            x + f64::from(rate.unit_offset),
+                            y,
+                            f64::from(rate.unit_width),
+                            11.0,
+                        ),
+                        10.0,
+                        0.0,
+                        &foreground,
+                        false,
+                    );
+                }
+            } else if let Some(tones) = column.fan_tones {
+                for ((value, y), tone) in [(&column.top, 0.0), (&column.bottom, 11.0)]
+                    .into_iter()
+                    .zip(tones)
+                {
+                    let [r, g, b] = tone.rgb(if dark { [255; 3] } else { [0; 3] });
+                    let value_color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                        f64::from(r) / 255.0,
+                        f64::from(g) / 255.0,
+                        f64::from(b) / 255.0,
+                        1.0,
+                    );
+                    text(
+                        value,
+                        rect(x, y, f64::from(column.width), 11.0),
+                        if compact { 10.0 } else { 11.0 },
+                        0.0,
+                        &value_color,
+                        false,
+                    );
+                }
+            } else {
+                let [r, g, b] = column.tone.rgb(if dark { [255; 3] } else { [0; 3] });
+                let value_color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                    f64::from(r) / 255.0,
+                    f64::from(g) / 255.0,
+                    f64::from(b) / 255.0,
+                    1.0,
+                );
+                let heading_width = text(
+                    &column.top,
+                    rect(x, 0.0, column.width as f64, 9.0),
+                    7.5,
+                    0.0,
+                    &foreground,
+                    false,
+                );
+                use truongphatcomputer_platform::system_resources::battery::BatteryPowerState;
+                let direction = match column.power_state {
+                    Some(BatteryPowerState::Discharging) => Some(("↑", NSColor::systemRedColor())),
+                    Some(BatteryPowerState::Charging) => Some(("↓", NSColor::systemBlueColor())),
+                    Some(BatteryPowerState::Idle) | None => None,
+                };
+                if let Some((arrow, color)) = direction {
+                    text(
+                        arrow,
+                        rect(x + heading_width + 1.0, 0.0, 8.0, 9.0),
+                        7.5,
+                        0.0,
+                        &color,
+                        false,
+                    );
+                }
+                text(
+                    &column.bottom,
+                    rect(x, 8.0, column.width as f64, 14.0),
+                    if compact { 11.0 } else { 12.0 },
+                    0.3,
+                    &value_color,
+                    false,
+                );
+            }
+            x += (column.width + macos_presentation::gap(compact)) as f64;
+        }
+        Bool::YES
+    });
+    let image = NSImage::imageWithSize_flipped_drawingHandler(size, true, &draw);
+    image.setTemplate(false);
+    image
+}
+
+pub fn apply(
+    tray: &tauri::tray::TrayIcon,
+    entries: &[DisplayEntry],
+    icon: bool,
+    compact: bool,
+    summary: &str,
+    cache: &mut Cache,
+) -> tauri::Result<bool> {
+    let columns = macos_presentation::columns(entries, compact);
+    let changed = cache.columns != columns || cache.icon != Some(icon) || cache.compact != compact;
+    let previous_appearance = cache.appearance.clone();
+    let previous_button = cache.button;
+    let content = columns.clone();
+    let label = format!("Trường Phát Computer\n{summary}");
+    let result = tray.with_inner_tray_icon(move |tray| {
+        let mtm = MainThreadMarker::new().expect("native tray rendering runs on the main thread");
+        let item = tray.ns_status_item()?;
+        let button = item.button(mtm)?;
+        let appearance = button.effectiveAppearance().name().to_string();
+        let identity = Retained::as_ptr(&button) as usize;
+        let redraw = changed || appearance != previous_appearance || identity != previous_button;
+        if redraw {
+            button.setTitle(&NSString::from_str(""));
+            button.setImage(Some(&image(
+                content,
+                icon,
+                appearance.contains("Dark"),
+                compact,
+            )));
+            button.setImagePosition(NSCellImagePosition::ImageOnly);
+            // AppKit adds its normal status-item padding around the content image.
+            item.setLength(-1.0);
+        }
+        button.setAccessibilityLabel(Some(&NSString::from_str(&label)));
+        Some((
+            appearance,
+            identity,
+            redraw,
+            item.isVisible(),
+            button.window().map(|window| window.frame()),
+        ))
+    })?;
+    let Some((appearance, button, redraw, native_visible, native_frame)) = result else {
+        return Err(tauri::Error::Io(std::io::Error::other(
+            "display_native_button",
+        )));
+    };
+    if cache.icon != Some(icon)
+        || cache.appearance != appearance
+        || macos_presentation::width(&cache.columns, icon, cache.compact)
+            != macos_presentation::width(&columns, icon, compact)
+    {
+        log::info!(
+            "resident_macos_layout columns={} content_width_pt={} dark={} compact={compact} native_visible={native_visible} native_frame={native_frame:?}",
+            columns.len(),
+            macos_presentation::width(&columns, icon, compact),
+            appearance.contains("Dark")
+        );
+    }
+    cache.columns = columns;
+    cache.icon = Some(icon);
+    cache.compact = compact;
+    cache.appearance = appearance;
+    cache.button = button;
+    Ok(redraw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_fonts_fit_every_percentage_and_network_field() {
+        fn measured(value: &str, size: f64, weight: f64) -> f64 {
+            let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, weight);
+            let attributes: Retained<NSDictionary<NSString, AnyObject>> =
+                unsafe { NSDictionary::from_slices(&[NSFontAttributeName], &[&*font]) };
+            unsafe {
+                NSString::from_str(value)
+                    .sizeWithAttributes(Some(&attributes))
+                    .width
+            }
+        }
+        let entry = DisplayEntry {
+            gpu_device: None,
+            tone: Default::default(),
+            power_state: None,
+            fan_rows: None,
+            color_value: None,
+            id: super::super::display_entry::DisplayId::Cpu,
+            digits: "100".into(),
+            marker: "C".into(),
+            text: String::new(),
+            tooltip: String::new(),
+        };
+        let column = macos_presentation::columns(std::slice::from_ref(&entry), false);
+        let percentage_width = column[0].width as f64;
+        for compact in [false, true] {
+            let size = if compact { 11.0 } else { 12.0 };
+            let width = macos_presentation::columns(
+                &[DisplayEntry {
+                    gpu_device: None,
+                    id: super::super::display_entry::DisplayId::DiskTemperature,
+                    ..entry.clone()
+                }],
+                compact,
+            )[0]
+            .width as f64;
+            assert!(measured("DISK", if compact { 9.0 } else { 10.0 }, 0.3) <= width);
+            for value in 1..=150 {
+                assert!(
+                    measured(&format!("{value}°C"), size, 0.3) <= width,
+                    "temperature {value} overflows"
+                );
+            }
+        }
+        for compact in [false, true] {
+            let size = if compact { 11.0 } else { 12.0 };
+            let column = macos_presentation::columns(
+                &[DisplayEntry {
+                    gpu_device: None,
+                    id: super::super::display_entry::DisplayId::ChargingPower,
+                    ..entry.clone()
+                }],
+                compact,
+            );
+            for value in ["0W", "<1W", "99W", "300W", "—"] {
+                assert!(
+                    measured(value, size, 0.3) <= f64::from(column[0].width),
+                    "charging power {value} needs {} pt in a {} pt field (compact={compact})",
+                    measured(value, size, 0.3),
+                    column[0].width
+                );
+            }
+            for heading in ["BAT↑", "BAT↓", "IDLE"] {
+                assert!(
+                    measured(heading, 7.5, 0.0) <= f64::from(column[0].width),
+                    "battery state heading {heading} overflows"
+                );
+            }
+        }
+        for compact in [false, true] {
+            let size = if compact { 11.0 } else { 12.0 };
+            let column = macos_presentation::columns(
+                &[DisplayEntry {
+                    gpu_device: None,
+                    id: super::super::display_entry::DisplayId::FanSpeed,
+                    ..entry.clone()
+                }],
+                compact,
+            );
+            for value in ["0", "1350", "30000", "—"] {
+                assert!(
+                    measured(value, size, 0.3) <= f64::from(column[0].width),
+                    "fan speed {value} overflows (compact={compact})"
+                );
+            }
+        }
+        for compact in [false, true] {
+            let column = macos_presentation::columns(
+                &[DisplayEntry {
+                    gpu_device: None,
+                    id: super::super::display_entry::DisplayId::FanSpeed,
+                    fan_rows: Some(["F1 0", "F10 30000"].map(|text| {
+                        crate::resident::tray_display::display_entry::FanRow {
+                            id: 0,
+                            text: text.into(),
+                            color_value: None,
+                            tone: Default::default(),
+                        }
+                    })),
+                    ..entry.clone()
+                }],
+                compact,
+            );
+            for value in ["F1 0", "F10 30000", "F2 —"] {
+                assert!(
+                    measured(value, if compact { 10.0 } else { 11.0 }, 0.0)
+                        <= f64::from(column[0].width),
+                    "paired fan {value} overflows (compact={compact})"
+                );
+            }
+            for heading in ["FMAX", "FAVG", "FAN 10"] {
+                let single = macos_presentation::columns(
+                    &[DisplayEntry {
+                        gpu_device: None,
+                        id: super::super::display_entry::DisplayId::FanSpeed,
+                        ..entry.clone()
+                    }],
+                    compact,
+                );
+                assert!(measured(heading, 7.5, 0.0) <= f64::from(single[0].width));
+            }
+        }
+        // Real AppKit metrics catch regressions that string-length tests miss.
+        for compact in [false, true] {
+            let size = if compact { 11.0 } else { 12.0 };
+            for digits in ["0", "<1", "999", "1000", "3000", "—"] {
+                let width = macos_presentation::columns(
+                    &[DisplayEntry {
+                        gpu_device: None,
+                        id: super::super::display_entry::DisplayId::SystemPower,
+                        digits: digits.into(),
+                        ..entry.clone()
+                    }],
+                    compact,
+                )[0]
+                .width;
+                let value = if digits == "—" {
+                    "—".into()
+                } else {
+                    format!("{digits}W")
+                };
+                assert!(
+                    measured(&value, size, 0.3) <= f64::from(width),
+                    "system power {value} needs {} pt in a {width} pt field (compact={compact})",
+                    measured(&value, size, 0.3)
+                );
+            }
+        }
+        for value in 0..=100 {
+            assert!(
+                measured(&format!("{value}%"), 11.0, 0.3) <= 34.0,
+                "compact percentage {value} overflows"
+            );
+            assert!(
+                measured(&format!("{value}%"), 12.0, 0.3) <= percentage_width,
+                "percentage {value} overflows"
+            );
+        }
+        for compact in [false, true] {
+            let rate = macos_presentation::rate_layout(compact);
+            for value in 0..=999 {
+                assert!(
+                    measured(&value.to_string(), 10.0, 0.0) <= f64::from(rate.value_width),
+                    "rate {value} overflows with compact={compact}"
+                );
+            }
+            let units = if compact {
+                ["B", "K", "M", "G", "T"]
+            } else {
+                ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
+            };
+            for unit in units {
+                assert!(
+                    measured(unit, 10.0, 0.0) <= f64::from(rate.unit_width),
+                    "unit {unit} overflows with compact={compact}"
+                );
+            }
+        }
+    }
+}

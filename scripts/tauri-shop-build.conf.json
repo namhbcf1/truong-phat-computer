@@ -1,0 +1,8 @@
+{
+  "build": {
+    "beforeBuildCommand": "node scripts/build-partner-bundle.mjs"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}
