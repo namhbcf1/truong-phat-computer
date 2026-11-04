@@ -57,52 +57,62 @@ jobs:
 
           $pfxPath = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
           $base64 = $env:SIGNING_PFX_BASE64 -replace '\s', ''
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($base64))
+          $pfxBytes = [Convert]::FromBase64String($base64)
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
 
-          # The digest identifies which key pair the repository secret holds. It is
-          # the only reliable way to tell a stale secret from a wrong certificate,
-          # because both fail here with the same message.
-          Write-Output "PFX bytes: $((Get-Item $pfxPath).Length)"
+          # The digest identifies which key pair the repository secret holds, which is
+          # the only reliable way to distinguish a stale secret from a wrong
+          # certificate: both fail below with the same message.
+          Write-Output "PFX bytes: $($pfxBytes.Length)"
           Write-Output "PFX sha256: $((Get-FileHash -LiteralPath $pfxPath -Algorithm SHA256).Hash)"
 
-          # certutil imports the key pair without the PowerShell PKI cmdlets.
-          # Import-PfxCertificate blocks indefinitely on a hosted runner because it
-          # waits on a key provider that never answers in a non-interactive session.
-          # -user targets the current user's store; without it certutil writes to the
-          # machine store, which Tauri and signtool do not search.
-          & certutil.exe -f -user -p $env:SIGNING_PFX_PASSWORD -importPFX My $pfxPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil -importPFX failed with exit code $LASTEXITCODE"
+          # The import uses X509Certificate2 and X509Store instead of
+          # Import-PfxCertificate or certutil. Both of those block indefinitely on a
+          # hosted runner: the cmdlet waits on a key provider that never answers in a
+          # non-interactive session, and certutil raises a confirmation dialog. The
+          # managed API imports the key with no user interaction.
+          Add-Type -AssemblyName System.Security
+
+          $keyFlags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet -bor
+                      [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
+                      [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+
+          $imported = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $pfxPath,
+            $env:SIGNING_PFX_PASSWORD,
+            $keyFlags
+          )
+          if (-not $imported.HasPrivateKey) {
+            throw 'The PFX was read but carries no usable private key'
           }
 
-          Write-Output 'Certificates with a private key in the user store:'
-          Get-ChildItem Cert:\CurrentUser\My |
-            Where-Object { $_.HasPrivateKey } |
-            ForEach-Object { Write-Output "  $($_.Thumbprint) $($_.Subject)" }
-
-          $certificate = Get-ChildItem Cert:\CurrentUser\My |
-            Where-Object { $_.HasPrivateKey -and $_.Subject -like '*TRUONG PHAT COMPUTER*' } |
-            Select-Object -First 1
-          if (-not $certificate) {
-            throw 'The imported certificate is not present in Cert:\CurrentUser\My'
+          $personal = [System.Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')
+          $personal.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+          try {
+            $personal.Add($imported)
+          }
+          finally {
+            $personal.Close()
           }
 
-          # signtool verify /pa evaluates the Authenticode policy, which requires a
-          # trusted chain. Trusting the certificate on the runner mirrors a client
-          # machine that installed the public certificate.
-          $cerPath = Join-Path $env:RUNNER_TEMP 'code-signing.cer'
-          Export-Certificate -Cert $certificate -FilePath $cerPath -Type CERT | Out-Null
-          & certutil.exe -f -addstore Root $cerPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil -addstore Root failed with exit code $LASTEXITCODE"
-          }
-          & certutil.exe -f -addstore TrustedPublisher $cerPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil -addstore TrustedPublisher failed with exit code $LASTEXITCODE"
+          # signtool verify /pa evaluates the Authenticode policy, so the chain has to
+          # be trusted on the runner. The machine store accepts the addition without
+          # the interactive consent prompt that the current user root store raises.
+          $publicOnly = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($imported.RawData)
+          foreach ($storeName in 'Root', 'TrustedPublisher') {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
+            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            try {
+              $store.Add($publicOnly)
+            }
+            finally {
+              $store.Close()
+            }
+            Write-Output "Trusted $($publicOnly.Thumbprint) in LocalMachine\$storeName"
           }
 
           Remove-Item -LiteralPath $pfxPath -Force
-          Write-Output "Imported signing certificate $($certificate.Thumbprint)"
+          Write-Output "Imported signing certificate $($imported.Thumbprint) $($imported.Subject)"
 
       - name: Build signed installer
         shell: pwsh
