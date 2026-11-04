@@ -59,22 +59,31 @@ jobs:
           $base64 = $env:SIGNING_PFX_BASE64 -replace '\s', ''
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($base64))
 
+          # The digest identifies which key pair the repository secret holds. It is
+          # the only reliable way to tell a stale secret from a wrong certificate,
+          # because both fail here with the same message.
+          Write-Output "PFX bytes: $((Get-Item $pfxPath).Length)"
+          Write-Output "PFX sha256: $((Get-FileHash -LiteralPath $pfxPath -Algorithm SHA256).Hash)"
+
           # certutil imports the key pair without the PowerShell PKI cmdlets.
           # Import-PfxCertificate blocks indefinitely on a hosted runner because it
           # waits on a key provider that never answers in a non-interactive session.
-          & certutil.exe -f -p $env:SIGNING_PFX_PASSWORD -importPFX My $pfxPath
+          # -user targets the current user's store; without it certutil writes to the
+          # machine store, which Tauri and signtool do not search.
+          & certutil.exe -f -user -p $env:SIGNING_PFX_PASSWORD -importPFX My $pfxPath
           if ($LASTEXITCODE -ne 0) {
             throw "certutil -importPFX failed with exit code $LASTEXITCODE"
           }
+
+          Write-Output 'Certificates with a private key in the user store:'
+          Get-ChildItem Cert:\CurrentUser\My |
+            Where-Object { $_.HasPrivateKey } |
+            ForEach-Object { Write-Output "  $($_.Thumbprint) $($_.Subject)" }
 
           $certificate = Get-ChildItem Cert:\CurrentUser\My |
             Where-Object { $_.HasPrivateKey -and $_.Subject -like '*TRUONG PHAT COMPUTER*' } |
             Select-Object -First 1
           if (-not $certificate) {
-            Write-Output 'Certificates with a private key now in the store:'
-            Get-ChildItem Cert:\CurrentUser\My |
-              Where-Object { $_.HasPrivateKey } |
-              ForEach-Object { Write-Output "  $($_.Thumbprint) $($_.Subject)" }
             throw 'The imported certificate is not present in Cert:\CurrentUser\My'
           }
 
