@@ -17,7 +17,7 @@ jobs:
   build:
     name: Build and sign installer
     runs-on: windows-latest
-    timeout-minutes: 720
+    timeout-minutes: 90
     outputs:
       artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
     steps:
@@ -56,20 +56,40 @@ jobs:
           }
 
           $pfxPath = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
-          $password = ConvertTo-SecureString -String $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
-          $imported = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $base64 = $env:SIGNING_PFX_BASE64 -replace '\s', ''
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($base64))
+
+          # certutil imports the key pair without the PowerShell PKI cmdlets.
+          # Import-PfxCertificate blocks indefinitely on a hosted runner because it
+          # waits on a key provider that never answers in a non-interactive session.
+          & certutil.exe -f -p $env:SIGNING_PFX_PASSWORD -importPFX My $pfxPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil -importPFX failed with exit code $LASTEXITCODE"
+          }
+
+          $certificate = Get-ChildItem Cert:\CurrentUser\My |
+            Where-Object { $_.HasPrivateKey -and $_.Subject -like '*TRUONG PHAT COMPUTER*' } |
+            Select-Object -First 1
+          if (-not $certificate) {
+            throw 'The imported certificate is not present in Cert:\CurrentUser\My'
+          }
 
           # signtool verify /pa evaluates the Authenticode policy, which requires a
           # trusted chain. Trusting the certificate on the runner mirrors a client
           # machine that installed the public certificate.
           $cerPath = Join-Path $env:RUNNER_TEMP 'code-signing.cer'
-          Export-Certificate -Cert $imported -FilePath $cerPath -Type CERT | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
+          Export-Certificate -Cert $certificate -FilePath $cerPath -Type CERT | Out-Null
+          & certutil.exe -f -addstore Root $cerPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil -addstore Root failed with exit code $LASTEXITCODE"
+          }
+          & certutil.exe -f -addstore TrustedPublisher $cerPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil -addstore TrustedPublisher failed with exit code $LASTEXITCODE"
+          }
 
           Remove-Item -LiteralPath $pfxPath -Force
-          Write-Output "Imported signing certificate $($imported.Thumbprint)"
+          Write-Output "Imported signing certificate $($certificate.Thumbprint)"
 
       - name: Build signed installer
         shell: pwsh
