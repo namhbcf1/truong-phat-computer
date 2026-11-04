@@ -71,6 +71,10 @@ jobs:
             Where-Object { $_.HasPrivateKey -and $_.Subject -like '*TRUONG PHAT COMPUTER*' } |
             Select-Object -First 1
           if (-not $certificate) {
+            Write-Output 'Certificates with a private key now in the store:'
+            Get-ChildItem Cert:\CurrentUser\My |
+              Where-Object { $_.HasPrivateKey } |
+              ForEach-Object { Write-Output "  $($_.Thumbprint) $($_.Subject)" }
             throw 'The imported certificate is not present in Cert:\CurrentUser\My'
           }
 
