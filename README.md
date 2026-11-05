@@ -377,6 +377,16 @@ pnpm cli:build
 
 Local builds do not include the signing, notarization, or update metadata provided by official Trường Phát Computer releases. Use them for local development and validation only.
 
+## Code Signing Policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Committers and reviewers: [@namhbcf1](https://github.com/namhbcf1). Approvers: [@namhbcf1](https://github.com/namhbcf1). Every signing request is approved manually before the artifact is signed.
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The application analyzes local disks and performs local cleanup; it contains no telemetry and no update channel. The released Windows installer embeds the Microsoft WebView2 runtime, so it needs no network access.
+
+See [`.github/CODE-SIGNING.md`](.github/CODE-SIGNING.md) for the roles, the signed files, and how to verify a download.
+
 ## Contributing
 
 Issues, cleanup rules, fixes, and new features are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) before getting started.
